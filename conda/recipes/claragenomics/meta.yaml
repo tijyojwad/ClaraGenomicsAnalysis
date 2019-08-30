@@ -1,0 +1,28 @@
+package:
+  name: claragenomics 
+  version: "0.3.0"
+
+source:
+  path: ../../..
+
+build:
+  number: 1
+  string: "temp"
+
+requirements:
+  build:
+    - cmake >=3.10.2
+    - doxygen
+  host:
+    - cudatoolkit
+
+test:
+  commands:
+    - test -f $PREFIX/include/claragenomics/cudapoa/cudapoa.hpp
+
+about:
+  home: http://nvidia.com/
+  license: Apache-2.0
+  license_family: Apache
+  license_file: LICENSE
+  summary: ClaraGenomicsAnalysis library
