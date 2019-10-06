@@ -180,6 +180,18 @@ int main(int argc, char *argv[])
 
         auto overlapper = claragenomics::OverlapperTriggered();
 
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> qranges;
+        std::vector<claragenomics::FastaParser*> qparsers;
+        qranges.push_back(query_range);
+        qparsers.push_back(query_parser.get());
+
+        auto orig_index = claragenomics::Index::create_index(qparsers, k, w, qranges, NULL, false);
+
+        std::cerr << "Index execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::high_resolution_clock::now() - start_time).count() << "ms" << std::endl;
+        index_time += std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::high_resolution_clock::now() - start_time);
+
         size_t target_start = 0;
         // If denovo mode, then we can optimzie by starting the target sequences from the same index as
         // query because all indices before the current query index are guaranteed to have been processed in
@@ -196,8 +208,8 @@ int main(int argc, char *argv[])
             std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
             std::vector<claragenomics::FastaParser*> parsers;
 
-            ranges.push_back(query_range);
-            parsers.push_back(query_parser.get());
+            //ranges.push_back(query_range);
+            //parsers.push_back(query_parser.get());
             auto match_point = (query_range.second - query_range.first);
 
             if (!(denovo && target_start == query_start && target_end == query_end))
@@ -215,7 +227,7 @@ int main(int argc, char *argv[])
 
             std::cerr << "Ranges: query " << query_start << "," << query_end << " | target " << target_start << "," << target_end << std::endl;
 
-            auto new_index = claragenomics::Index::create_index(parsers, k, w, ranges);
+            auto new_index = claragenomics::Index::create_index(parsers, k, w, ranges, orig_index.get(), true);
 
             CGA_LOG_INFO("Created index");
             std::cerr << "Index execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -54,7 +54,7 @@ namespace claragenomics {
         /// \param kmer_size k - the kmer length
         /// \param window_size w - the length of the sliding window used to find sketch elements
         /// \param read_ranges - the ranges of reads in the query file to use for mapping, index by their position (e.g in the FASA file)
-        IndexGPU(const std::vector<FastaParser*>& parsers, const std::uint64_t kmer_size, const std::uint64_t window_size, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges);
+        IndexGPU(const std::vector<FastaParser*>& parsers, const std::uint64_t kmer_size, const std::uint64_t window_size, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges, void* another_index, bool build);
 
         /// \brief Constructor
         IndexGPU();
@@ -99,11 +99,17 @@ namespace claragenomics {
         /// \return the largest possible representation
         std::uint64_t maximum_representation() const override {return (1 << (kmer_size_ * 2)) - 1;};
 
+        std::vector<std::vector<representation_t>> representations_from_all_loops_h;
+        std::vector<std::vector<typename SketchElementImpl::ReadidPositionDirection>> rest_from_all_loops_h;
+
+        std::vector<std::string> read_id_to_read_name_;
+        std::vector<std::uint32_t> read_id_to_read_length_;
+
     private:
 
         /// \brief generates the index
         /// \param query_filename
-        void generate_index(const std::vector<FastaParser*>& parsers, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges);
+        void generate_index(const std::vector<FastaParser*>& parsers, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges, void* another_index, bool build);
 
         const std::uint64_t kmer_size_;
         const std::uint64_t window_size_;
@@ -113,9 +119,6 @@ namespace claragenomics {
         std::vector<position_in_read_t> positions_in_reads_;
         std::vector<read_id_t> read_ids_;
         std::vector<typename SketchElementImpl::DirectionOfRepresentation> directions_of_reads_;
-
-        std::vector<std::string> read_id_to_read_name_;
-        std::vector<std::uint32_t> read_id_to_read_length_;
 
         std::vector<std::vector<RepresentationToSketchElements>> read_id_and_representation_to_sketch_elements_;
     };
@@ -232,6 +235,7 @@ namespace index_gpu {
         // between rep_x and rep_y from all arrays, put it on device, sort and move the sorted data back to host.
         // If these chunks are chosen as ((rep_0, rep_x), (rep_x + 1, rep_y), (rep_y + 1, rep_z) ...) the final result will be completely sorted.
         // generate_bucket_boundary_indices generates buckets/chunks of representations so that they fit the device memory
+
 
         std::uint64_t size_of_one_element = sizeof(representation_t) + sizeof(ReadidPositionDirection);
         // how many elements can be sorted at once (thrust::stable_sort_by_key is done out-of-place, hence 2.1)
@@ -494,10 +498,10 @@ namespace index_gpu {
 } // namespace details
 
     template <typename SketchElementImpl>
-    IndexGPU<SketchElementImpl>::IndexGPU(const std::vector<FastaParser*>& parsers, const std::uint64_t kmer_size, const std::uint64_t window_size, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges)
+    IndexGPU<SketchElementImpl>::IndexGPU(const std::vector<FastaParser*>& parsers, const std::uint64_t kmer_size, const std::uint64_t window_size, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges, void* another_index, bool build)
     : kmer_size_(kmer_size), window_size_(window_size), number_of_reads_(0), reached_end_of_input_(false)
     {
-        generate_index(parsers, read_ranges);
+        generate_index(parsers, read_ranges, another_index, build);
     }
 
     template <typename SketchElementImpl>
@@ -531,12 +535,43 @@ namespace index_gpu {
 
     // TODO: This function will be split into several functions
     template <typename SketchElementImpl>
-    void IndexGPU<SketchElementImpl>::generate_index(const std::vector<FastaParser*>& parsers, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges) {
+    void IndexGPU<SketchElementImpl>::generate_index(const std::vector<FastaParser*>& parsers, const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges, void* another_index, bool build) {
+        representations_from_all_loops_h.clear();
+        representations_from_all_loops_h.shrink_to_fit();
+        rest_from_all_loops_h.clear();
+        rest_from_all_loops_h.shrink_to_fit();
 
         number_of_reads_ = 0;
 
-        std::vector<std::vector<representation_t>> representations_from_all_loops_h;
-        std::vector<std::vector<typename SketchElementImpl::ReadidPositionDirection>> rest_from_all_loops_h;
+        // Copy another index details
+        if (NULL != another_index)
+        {
+            auto temp_index = static_cast<IndexGPU<SketchElementImpl>*>(another_index);
+            for (auto item : temp_index->rest_from_all_loops_h)
+            {
+                rest_from_all_loops_h.push_back(item);
+            }
+            //std::copy(std::begin(temp_index->rest_from_all_loops_h), std::end(temp_index->rest_from_all_loops_h), std::begin(rest_from_all_loops_h));
+            for (auto item : temp_index->representations_from_all_loops_h)
+            {
+                representations_from_all_loops_h.push_back(item);
+            }
+            //std::copy(std::begin(temp_index->representations_from_all_loops_h), std::end(temp_index->representations_from_all_loops_h), std::begin(representations_from_all_loops_h));
+
+            number_of_reads_ += temp_index->number_of_reads();
+            for(auto item : temp_index->read_id_to_read_name_)
+            {
+                read_id_to_read_name_.push_back(item);
+            }
+            for(auto item : temp_index->read_id_to_read_length_)
+            {
+                read_id_to_read_length_.push_back(item);
+            }
+        }
+
+
+        //std::vector<std::vector<representation_t>> representations_from_all_loops_h;
+        //std::vector<std::vector<typename SketchElementImpl::ReadidPositionDirection>> rest_from_all_loops_h;
 
         std::uint64_t total_basepairs = 0;
         std::vector<ArrayBlock> read_id_to_basepairs_section_h;
@@ -602,111 +637,121 @@ namespace index_gpu {
         fasta_sequences.clear();
         fasta_sequences.shrink_to_fit();
 
-        // move basepairs to the device
-        CGA_LOG_INFO("Allocating {} bytes for read_id_to_basepairs_section_d", read_id_to_basepairs_section_h.size() * sizeof(decltype(read_id_to_basepairs_section_h)::value_type));
-        device_buffer<decltype(read_id_to_basepairs_section_h)::value_type> read_id_to_basepairs_section_d( read_id_to_basepairs_section_h.size());
-        //device_buffer<ArrayBlock> read_id_to_basepairs_section_d(1);
-        CGA_LOG_INFO("Allocated");
-        CGA_CU_CHECK_ERR(cudaMemcpy(read_id_to_basepairs_section_d.data(),
-                    read_id_to_basepairs_section_h.data(),
-                    read_id_to_basepairs_section_h.size() * sizeof(decltype(read_id_to_basepairs_section_h)::value_type),
-                    cudaMemcpyHostToDevice
-                    )
-                );
+        if (number_of_reads_to_add > 0)
+        {
 
-        CGA_LOG_INFO("Allocating {} bytes for merged_basepairs_d", merged_basepairs_h.size() * sizeof(decltype(merged_basepairs_h)::value_type));
-        device_buffer<decltype(merged_basepairs_h)::value_type> merged_basepairs_d(merged_basepairs_h.size());
-        CGA_CU_CHECK_ERR(cudaMemcpy(merged_basepairs_d.data(),
-                    merged_basepairs_h.data(),
-                    merged_basepairs_h.size() * sizeof(decltype(merged_basepairs_h)::value_type),
-                    cudaMemcpyHostToDevice
-                    )
-                );
-        merged_basepairs_h.clear();
-        merged_basepairs_h.shrink_to_fit();
+            // move basepairs to the device
+            CGA_LOG_INFO("Allocating {} bytes for read_id_to_basepairs_section_d", read_id_to_basepairs_section_h.size() * sizeof(decltype(read_id_to_basepairs_section_h)::value_type));
+            device_buffer<decltype(read_id_to_basepairs_section_h)::value_type> read_id_to_basepairs_section_d( read_id_to_basepairs_section_h.size());
+            //device_buffer<ArrayBlock> read_id_to_basepairs_section_d(1);
+            CGA_LOG_INFO("Allocated");
+            CGA_CU_CHECK_ERR(cudaMemcpy(read_id_to_basepairs_section_d.data(),
+                        read_id_to_basepairs_section_h.data(),
+                        read_id_to_basepairs_section_h.size() * sizeof(decltype(read_id_to_basepairs_section_h)::value_type),
+                        cudaMemcpyHostToDevice
+                        )
+                    );
 
-        // sketch elements get generated here
-        auto sketch_elements = SketchElementImpl::generate_sketch_elements(number_of_reads_to_add,
-                kmer_size_,
-                window_size_,
-                number_of_reads_ - number_of_reads_to_add,
-                merged_basepairs_d,
-                read_id_to_basepairs_section_h,
-                read_id_to_basepairs_section_d
-                );
-        device_buffer<representation_t> representations_from_this_loop_d = std::move(sketch_elements.representations_d);
-        device_buffer<typename SketchElementImpl::ReadidPositionDirection> rest_from_this_loop_d = std::move(sketch_elements.rest_d);
+            CGA_LOG_INFO("Allocating {} bytes for merged_basepairs_d", merged_basepairs_h.size() * sizeof(decltype(merged_basepairs_h)::value_type));
+            device_buffer<decltype(merged_basepairs_h)::value_type> merged_basepairs_d(merged_basepairs_h.size());
+            CGA_CU_CHECK_ERR(cudaMemcpy(merged_basepairs_d.data(),
+                        merged_basepairs_h.data(),
+                        merged_basepairs_h.size() * sizeof(decltype(merged_basepairs_h)::value_type),
+                        cudaMemcpyHostToDevice
+                        )
+                    );
+            merged_basepairs_h.clear();
+            merged_basepairs_h.shrink_to_fit();
 
-        CGA_LOG_INFO("Deallocating {} bytes from read_id_to_basepairs_section_d", read_id_to_basepairs_section_d.size() * sizeof(decltype(read_id_to_basepairs_section_d)::value_type));
-        read_id_to_basepairs_section_d.free();
-        CGA_LOG_INFO("Deallocating {} bytes from merged_basepairs_d",  merged_basepairs_d.size() * sizeof(decltype(merged_basepairs_d)::value_type));
-        merged_basepairs_d.free();
+            // sketch elements get generated here
+            auto sketch_elements = SketchElementImpl::generate_sketch_elements(number_of_reads_to_add,
+                    kmer_size_,
+                    window_size_,
+                    number_of_reads_ - number_of_reads_to_add,
+                    merged_basepairs_d,
+                    read_id_to_basepairs_section_h,
+                    read_id_to_basepairs_section_d
+                    );
+            device_buffer<representation_t> representations_from_this_loop_d = std::move(sketch_elements.representations_d);
+            device_buffer<typename SketchElementImpl::ReadidPositionDirection> rest_from_this_loop_d = std::move(sketch_elements.rest_d);
 
-        // *** sort sketch elements by representation ***
-        // As this is a stable sort and the data was initailly grouper by read_id this means that the sketch elements within each representations are sorted by read_id
-        thrust::stable_sort_by_key(thrust::device,
-                representations_from_this_loop_d.data(),
-                representations_from_this_loop_d.data() + representations_from_this_loop_d.size(),
-                rest_from_this_loop_d.data()
-                );
+            CGA_LOG_INFO("Deallocating {} bytes from read_id_to_basepairs_section_d", read_id_to_basepairs_section_d.size() * sizeof(decltype(read_id_to_basepairs_section_d)::value_type));
+            read_id_to_basepairs_section_d.free();
+            CGA_LOG_INFO("Deallocating {} bytes from merged_basepairs_d",  merged_basepairs_d.size() * sizeof(decltype(merged_basepairs_d)::value_type));
+            merged_basepairs_d.free();
 
-        representations_from_all_loops_h.push_back(decltype(representations_from_all_loops_h)::value_type(representations_from_this_loop_d.size()));
-        CGA_CU_CHECK_ERR(cudaMemcpy(representations_from_all_loops_h.back().data(),
+            // *** sort sketch elements by representation ***
+            // As this is a stable sort and the data was initailly grouper by read_id this means that the sketch elements within each representations are sorted by read_id
+            thrust::stable_sort_by_key(thrust::device,
                     representations_from_this_loop_d.data(),
-                    representations_from_this_loop_d.size() * sizeof(decltype(representations_from_this_loop_d)::value_type),
-                    cudaMemcpyDeviceToHost
-                    )
-                );
-        rest_from_all_loops_h.push_back(typename decltype(rest_from_all_loops_h)::value_type(rest_from_this_loop_d.size()));
-        CGA_CU_CHECK_ERR(cudaMemcpy(rest_from_all_loops_h.back().data(),
-                    rest_from_this_loop_d.data(),
-                    rest_from_this_loop_d.size() * sizeof(typename decltype(rest_from_this_loop_d)::value_type),
-                    cudaMemcpyDeviceToHost
-                    )
-                );
+                    representations_from_this_loop_d.data() + representations_from_this_loop_d.size(),
+                    rest_from_this_loop_d.data()
+                    );
 
-        // free these arrays as they are not needed anymore
-        CGA_LOG_INFO("Deallocating {} bytes from representations_from_this_loop_d", representations_from_this_loop_d.size() * sizeof(decltype(representations_from_this_loop_d)::value_type));
-        representations_from_this_loop_d.free();
-        CGA_LOG_INFO("Deallocating {} bytes from rest_from_this_loop_d", rest_from_this_loop_d.size() * sizeof(typename decltype(rest_from_this_loop_d)::value_type));
-        rest_from_this_loop_d.free();
+            //representations_from_all_loops_h.push_back(decltype(representations_from_all_loops_h)::value_type(representations_from_this_loop_d.size()));
+            representations_from_all_loops_h.push_back(typename decltype (representations_from_all_loops_h)::value_type(representations_from_this_loop_d.size()));
+            CGA_CU_CHECK_ERR(cudaMemcpy(representations_from_all_loops_h.back().data(),
+                        representations_from_this_loop_d.data(),
+                        representations_from_this_loop_d.size() * sizeof(decltype(representations_from_this_loop_d)::value_type),
+                        cudaMemcpyDeviceToHost
+                        )
+                    );
+            rest_from_all_loops_h.push_back(typename decltype(rest_from_all_loops_h)::value_type(rest_from_this_loop_d.size()));
+            CGA_CU_CHECK_ERR(cudaMemcpy(rest_from_all_loops_h.back().data(),
+                        rest_from_this_loop_d.data(),
+                        rest_from_this_loop_d.size() * sizeof(typename decltype(rest_from_this_loop_d)::value_type),
+                        cudaMemcpyDeviceToHost
+                        )
+                    );
+
+            // free these arrays as they are not needed anymore
+            CGA_LOG_INFO("Deallocating {} bytes from representations_from_this_loop_d", representations_from_this_loop_d.size() * sizeof(decltype(representations_from_this_loop_d)::value_type));
+            representations_from_this_loop_d.free();
+            CGA_LOG_INFO("Deallocating {} bytes from rest_from_this_loop_d", rest_from_this_loop_d.size() * sizeof(typename decltype(rest_from_this_loop_d)::value_type));
+            rest_from_this_loop_d.free();
+        }
 
         // merge sketch elements arrays from previous arrays in one big array
         std::vector<representation_t> merged_representations_h;
         std::vector<typename SketchElementImpl::ReadidPositionDirection> merged_rest_h;
 
-        if (representations_from_all_loops_h.size() > 1) {
-            std::size_t free_device_memory = 0;
-            std::size_t total_device_memory = 0;
-            CGA_CU_CHECK_ERR(cudaMemGetInfo(&free_device_memory, &total_device_memory));
+        if (build)
+        {
+            if (representations_from_all_loops_h.size() > 1) {
+                std::size_t free_device_memory = 0;
+                std::size_t total_device_memory = 0;
+                CGA_CU_CHECK_ERR(cudaMemGetInfo(&free_device_memory, &total_device_memory));
 
-            // if there is more than one array in representations_from_all_loops_h and rest_from_all_loops_h merge those arrays together
-            details::index_gpu::merge_sketch_element_arrays(representations_from_all_loops_h,
-                                                            rest_from_all_loops_h,
-                                                            (free_device_memory / 100) * 90, // do not take all available device memory
-                                                            merged_representations_h,
-                                                            merged_rest_h
-                                                           );
-        } else {
-            // if there is only one array in each array there is nothing to be merged
-            merged_representations_h = std::move(representations_from_all_loops_h[0]);
-            merged_rest_h = std::move(rest_from_all_loops_h[0]);
+                // if there is more than one array in representations_from_all_loops_h and rest_from_all_loops_h merge those arrays together
+                details::index_gpu::merge_sketch_element_arrays(representations_from_all_loops_h,
+                        rest_from_all_loops_h,
+                        (free_device_memory / 100) * 90, // do not take all available device memory
+                        merged_representations_h,
+                        merged_rest_h
+                        );
+            } else {
+                // if there is only one array in each array there is nothing to be merged
+                merged_representations_h = std::move(representations_from_all_loops_h[0]);
+                merged_rest_h = std::move(rest_from_all_loops_h[0]);
+            }
+
+            //representations_from_all_loops_h.clear();
+            //representations_from_all_loops_h.shrink_to_fit();
+            //rest_from_all_loops_h.clear();
+            //rest_from_all_loops_h.shrink_to_fit();
+
+            // build read_id_and_representation_to_sketch_elements_ and copy sketch elements to output arrays
+            details::index_gpu::build_index(number_of_reads_,
+                    merged_representations_h,
+                    merged_rest_h,
+                    positions_in_reads_,
+                    read_ids_,
+                    directions_of_reads_,
+                    read_id_and_representation_to_sketch_elements_
+                    );
+
+            std::cerr << "Final " << representations_from_all_loops_h.size() << std::endl;
         }
-
-        representations_from_all_loops_h.clear();
-        representations_from_all_loops_h.shrink_to_fit();
-        rest_from_all_loops_h.clear();
-        rest_from_all_loops_h.shrink_to_fit();
-
-        // build read_id_and_representation_to_sketch_elements_ and copy sketch elements to output arrays
-        details::index_gpu::build_index(number_of_reads_,
-                                        merged_representations_h,
-                                        merged_rest_h,
-                                        positions_in_reads_,
-                                        read_ids_,
-                                        directions_of_reads_,
-                                        read_id_and_representation_to_sketch_elements_
-                                       );
     }
 
 } // namespace claragenomics

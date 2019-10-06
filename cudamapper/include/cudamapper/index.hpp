@@ -82,7 +82,7 @@ namespace claragenomics {
         /// \param ranges - the ranges of reads in the query file to use for mapping, index by their position (e.g in the FASTA file)
         /// \return instance of Index
         static std::unique_ptr<Index>
-        create_index(const std::vector<FastaParser*>& parsers, const std::uint64_t kmer_size, const std::uint64_t window_size, const std::vector<std::pair<std::uint64_t, std::uint64_t>> & ranges);
+        create_index(const std::vector<FastaParser*>& parsers, const std::uint64_t kmer_size, const std::uint64_t window_size, const std::vector<std::pair<std::uint64_t, std::uint64_t>> & ranges, void* another_index, bool build);
 
         /// \brief Returns whether there are any more reads to process in the reads file (e.g FASTA file)
         /// \return Returns whether there are any more reads to process in the reads file (e.g FASTA file)

@@ -16,8 +16,10 @@ namespace claragenomics {
     std::unique_ptr<Index> Index::create_index(const std::vector<FastaParser*>& parsers,
                                                const std::uint64_t kmer_size,
                                                const std::uint64_t window_size,
-                                               const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges){
-        return std::make_unique<IndexGPU<Minimizer>>(parsers, kmer_size, window_size, read_ranges);
+                                               const std::vector<std::pair<std::uint64_t, std::uint64_t>> &read_ranges,
+                                               void* another_index,
+                                               bool build){
+        return std::make_unique<IndexGPU<Minimizer>>(parsers, kmer_size, window_size, read_ranges, another_index, build);
     }
 
     std::unique_ptr<Index> Index::create_index() {
