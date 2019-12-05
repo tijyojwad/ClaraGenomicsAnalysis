@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
     size_t target_index_size   = 10000;
     size_t max_cache_size      = 100;
     double filtering_parameter = 1.0;
-    std::string optstring      = "t:i:k:w:h:d:c:";
+    std::string optstring      = "t:i:k:w:h:d:c:F:";
     uint32_t argument;
     while ((argument = getopt_long(argc, argv, optstring.c_str(), options, nullptr)) != -1)
     {
